@@ -1,99 +1,81 @@
 import { Context } from 'telegraf'
 import { getTelegramUser, updateBrokerId } from '../utils/database'
 import { getMessage } from '../utils/messages'
-import { brokerRegistrationKeyboard, startTradingKeyboard } from '../utils/keyboard'
-import { Markup } from 'telegraf'
+import { brokerRegistrationKeyboard, depositReminderKeyboard } from '../utils/keyboard'
 
-// Временное хранилище для ожидания broker ID
-const awaitingBrokerId: Set<number> = new Set()
+// Хранилище для ожидания broker ID
+const awaitingBrokerId: Record<number, boolean> = {}
 
 export async function handleBrokerIntro(ctx: Context) {
   const telegramId = ctx.from!.id
   const user = await getTelegramUser(telegramId)
-  
-  if (!user) return
+  const lang = user?.language || 'en'
 
-  const lang = user.language || 'en'
-  const name = user.first_name || 'Friend'
+  const registerUrl = `https://po4.cash/register?promo=WAVE100${telegramId}`
 
-  // Получаем данные из опроса (если есть)
-  const monthlyGoal = 500 // Из опроса
-  const budget = 50 // Из опроса
+  // Используем getMessage() для поддержки всех 6 языков
+  const messageText = getMessage(lang, 'broker.registrationInfo')
 
-  await ctx.reply(
-    getMessage(lang, 'broker.intro', name, monthlyGoal, budget),
-    brokerRegistrationKeyboard(lang)
-  )
+  await ctx.reply(messageText, {
+    reply_markup: {
+      inline_keyboard: [
+        [
+          {
+            text: getMessage(lang, 'broker.registerButton'),
+            url: registerUrl
+          }
+        ]
+      ]
+    }
+  })
+
+  // Автоматически через 5 секунд просим ввести ID
+  setTimeout(() => {
+    handleBrokerHaveId(ctx)
+  }, 5000)
 }
 
 export async function handleBrokerHaveId(ctx: Context) {
   const telegramId = ctx.from!.id
   const user = await getTelegramUser(telegramId)
-  
-  if (!user) return
+  const lang = user?.language || 'en'
 
-  const lang = user.language || 'en'
+  awaitingBrokerId[telegramId] = true
 
-  awaitingBrokerId.add(telegramId)
+  // Используем getMessage() для поддержки всех 6 языков
+  const promptText = getMessage(lang, 'broker.idPrompt')
 
-  await ctx.editMessageText(getMessage(lang, 'broker.idRequest'))
+  await ctx.reply(promptText)
 }
 
 export async function handleBrokerIdInput(ctx: Context, brokerId: string) {
   const telegramId = ctx.from!.id
   const user = await getTelegramUser(telegramId)
+  const lang = user?.language || 'en'
+
+  // Валидация ID
+  const cleanId = brokerId.replace(/[^0-9]/g, '')
   
-  if (!user) return
-
-  const lang = user.language || 'en'
-
-  // Валидация broker ID (4-12 digits)
-  if (!/^\d{4,12}$/.test(brokerId)) {
+  if (cleanId.length < 4 || cleanId.length > 12) {
+    // Используем getMessage() для ошибки валидации
     await ctx.reply(getMessage(lang, 'broker.invalidId'))
     return
   }
 
-  // Сохраняем broker ID
-  if (user.user_id) {
-    const success = await updateBrokerId(user.user_id, brokerId)
-    
-    if (success) {
-      awaitingBrokerId.delete(telegramId)
-      
-      await ctx.reply(
-        getMessage(lang, 'broker.success', brokerId),
-        { parse_mode: 'Markdown' }
-      )
-
-      // Напоминание о депозите
-      setTimeout(() => {
-        handleDepositReminder(ctx)
-      }, 3000)
-    } else {
-      await ctx.reply('❌ Error saving Broker ID. Please try again.')
-    }
+  // Сохраняем ID - ИСПРАВЛЕНО: используем updateBrokerId
+  if (user?.user_id) {
+    await updateBrokerId(user.user_id, cleanId)
   }
-}
 
-export async function handleDepositReminder(ctx: Context) {
-  const telegramId = ctx.from!.id
-  const user = await getTelegramUser(telegramId)
-  
-  if (!user) return
+  awaitingBrokerId[telegramId] = false
 
-  const lang = user.language || 'en'
+  // Используем getMessage() для подтверждения
+  const successText = getMessage(lang, 'broker.success', cleanId)
 
-  const brokerUrl = 'https://po7.cash/deposit'
-
-  await ctx.reply(
-    getMessage(lang, 'broker.depositReminder'),
-    Markup.inlineKeyboard([
-      [Markup.button.url('💰 Deposit Now', brokerUrl)],
-      [Markup.button.callback('⏰ Remind me in 1 hour', 'deposit_remind_1h')]
-    ])
-  )
+  // ИСПРАВЛЕНО: используем depositReminderKeyboard из keyboard.ts
+  await ctx.reply(successText, depositReminderKeyboard(lang))
 }
 
 export function isAwaitingBrokerId(telegramId: number): boolean {
-  return awaitingBrokerId.has(telegramId)
+  return awaitingBrokerId[telegramId] === true
 }

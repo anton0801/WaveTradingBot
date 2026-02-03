@@ -79,9 +79,9 @@ export async function handleSurveyBudget(ctx: Context, budget: number | 'custom'
   const lang = user?.language || 'en'
 
   if (budget === 'custom') {
-    // Запрашиваем кастомную сумму
+    // Запрашиваем кастомную сумму - используем getMessage()
     surveyData[telegramId].awaiting_custom_budget = true
-    await ctx.editMessageText('Please enter your custom budget amount (in USD):')
+    await ctx.editMessageText(getMessage(lang, 'survey.customBudgetPrompt'))
     return
   }
 
@@ -91,6 +91,45 @@ export async function handleSurveyBudget(ctx: Context, budget: number | 'custom'
     getMessage(lang, 'survey.question5'),
     surveyMonthlyGoalKeyboard(lang)
   )
+}
+
+// Новая функция для обработки кастомной суммы с использованием getMessage()
+export async function handleCustomBudgetInput(ctx: Context, text: string) {
+  const telegramId = ctx.from!.id
+  const user = await getTelegramUser(telegramId)
+  const lang = user?.language || 'en'
+
+  // Парсим сумму
+  const amount = parseInt(text.replace(/[^0-9]/g, ''))
+
+  if (isNaN(amount) || amount < 10) {
+    await ctx.reply(getMessage(lang, 'survey.customBudgetInvalid'))
+    return
+  }
+
+  if (amount > 10000) {
+    await ctx.reply(getMessage(lang, 'survey.customBudgetTooLarge'))
+    return
+  }
+
+  // Сохраняем сумму
+  surveyData[telegramId].start_budget = amount
+  surveyData[telegramId].awaiting_custom_budget = false
+
+  await ctx.reply(getMessage(lang, 'survey.customBudgetConfirm', amount))
+
+  // Переходим к следующему вопросу
+  setTimeout(() => {
+    ctx.reply(
+      getMessage(lang, 'survey.question5'),
+      surveyMonthlyGoalKeyboard(lang)
+    )
+  }, 1000)
+}
+
+// Проверка, ожидается ли кастомная сумма
+export function isAwaitingCustomBudget(telegramId: number): boolean {
+  return surveyData[telegramId]?.awaiting_custom_budget === true
 }
 
 export async function handleSurveyMonthlyGoal(ctx: Context, goal: number) {

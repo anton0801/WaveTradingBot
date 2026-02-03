@@ -10,7 +10,9 @@ import {
   handleSurveyBudget,
   handleSurveyMonthlyGoal,
   handleSurveyPriority,
-  handleSurveyComplete
+  handleSurveyComplete,
+  isAwaitingCustomBudget,
+  handleCustomBudgetInput
 } from './handlers/survey'
 import {
   handleBrokerIntro,
@@ -36,6 +38,7 @@ import {
   handleManualSignal
 } from './handlers/admin'
 import { getTelegramUser, upsertTelegramUser } from './utils/database'
+import { getMessage } from './utils/messages'
 
 console.log('🤖 Starting WaveTrading Telegram Bot...')
 
@@ -63,8 +66,21 @@ bot.command('start', async (ctx) => {
 bot.command('help', async (ctx) => {
   const user = await getTelegramUser(ctx.from.id)
   const lang = user?.language || 'en'
-  const { getMessage } = await import('./utils/messages')
   await ctx.reply(getMessage(lang, 'help'), { parse_mode: 'Markdown' })
+})
+
+// /support - NEW COMMAND
+bot.command('support', async (ctx) => {
+  const user = await getTelegramUser(ctx.from.id)
+  const lang = user?.language || 'en'
+  await ctx.reply(getMessage(lang, 'support'), { parse_mode: 'Markdown' })
+})
+
+// /course - UPDATED COMMAND
+bot.command('course', async (ctx) => {
+  const user = await getTelegramUser(ctx.from.id)
+  const lang = user?.language || 'en'
+  await ctx.reply(getMessage(lang, 'freeCourse'), { parse_mode: 'Markdown' })
 })
 
 // /account
@@ -72,13 +88,6 @@ bot.command('account', handleAccountInfo)
 
 // /signals
 bot.command('signals', handleSignalsIntro)
-
-// /course
-bot.command('course', async (ctx) => {
-  await ctx.reply(
-    `📚 FREE TRADING COURSE\n\nAccess the full course on our platform:\n${config.platformUrl}/course\n\n21 professional lessons covering:\n• Forex basics\n• Technical analysis\n• Risk management\n• Trading psychology\n• AI signals usage`
-  )
-})
 
 // Admin commands
 bot.command('admin', async (ctx) => {
@@ -194,10 +203,27 @@ bot.action(/^profit_(.+)$/, async (ctx) => {
   await handleSurveyComplete(ctx, ctx.match[1])
 })
 
-// Broker callbacks
-bot.action('broker_have_id', async (ctx) => {
+// Broker callbacks - UPDATED: удалена кнопка broker_have_id
+bot.action('broker_register', async (ctx) => {
   await ctx.answerCbQuery()
-  await handleBrokerHaveId(ctx)
+  const user = await getTelegramUser(ctx.from.id)
+  const lang = user?.language || 'en'
+  
+  const registerUrl = `https://po4.cash/register?promo=WAVE100${ctx.from.id}`
+  
+  await ctx.editMessageText(
+    getMessage(lang, 'broker.registerPrompt', registerUrl),
+    {
+      reply_markup: {
+        inline_keyboard: []
+      }
+    }
+  )
+  
+  // Автоматически переходим к запросу ID
+  setTimeout(() => {
+    handleBrokerHaveId(ctx)
+  }, 3000)
 })
 
 bot.action('deposit_remind_1h', async (ctx) => {
@@ -247,6 +273,14 @@ bot.action(/^trade_skip_(\d+)$/, async (ctx) => {
 bot.on('text', async (ctx) => {
   const telegramId = ctx.from.id
   const text = ctx.message.text
+  const user = await getTelegramUser(telegramId)
+  const lang = user?.language || 'en'
+
+  // ВАЖНО: Сначала проверяем кастомную сумму бюджета
+  if (isAwaitingCustomBudget(telegramId)) {
+    await handleCustomBudgetInput(ctx, text)
+    return
+  }
 
   // Проверяем если ожидается broker ID
   if (isAwaitingBrokerId(telegramId)) {
@@ -254,39 +288,59 @@ bot.on('text', async (ctx) => {
     return
   }
 
-  // Меню кнопки
-  if (text === '📝 Register on Platform' || text === '📝 Регистрация на платформе') {
+  // Определяем текст кнопок для всех языков
+  const buttonTexts = {
+    register: ['📝 Register on Platform', '📝 Регистрация на платформе', '📝 Registrarse en la Plataforma', '📝 Auf Plattform Registrieren', '📝 Зареєструватися на Платформі', '📝 S\'inscrire sur la Plateforme'],
+    signals: ['📊 Get AI Signals', '📊 Получить AI сигналы', '📊 Obtener Señales de IA', '📊 KI-Signale Erhalten', '📊 Отримати AI сигнали', '📊 Obtenir des Signaux IA'],
+    course: ['📚 Free Course', '📚 Бесплатный курс', '📚 Curso Gratuito', '📚 Kostenloser Kurs', '📚 Безкоштовний курс', '📚 Cours Gratuit'],
+    account: ['👤 My Account', '👤 Мой аккаунт', '👤 Mi Cuenta', '👤 Mein Konto', '👤 Мій акаунт', '👤 Mon Compte'],
+    support: ['💬 Support', '💬 Поддержка', '💬 Soporte', '💬 Support', '💬 Підтримка', '💬 Support']
+  }
+
+  // Регистрация
+  if (buttonTexts.register.includes(text)) {
     await handleRegistration(ctx)
     return
   }
 
-  if (text === '📊 Get AI Signals' || text === '📊 Получить AI сигналы') {
+  // AI Сигналы
+  if (buttonTexts.signals.includes(text)) {
     await handleSignalsIntro(ctx)
     return
   }
 
-  if (text === '📚 Free Course' || text === '📚 Бесплатный курс') {
-    await ctx.reply(
-      `📚 FREE TRADING COURSE\n\nAccess on platform:\n${config.platformUrl}/course`
-    )
+  // Бесплатный курс - UPDATED
+  if (buttonTexts.course.includes(text)) {
+    await ctx.reply(getMessage(lang, 'freeCourse'), { parse_mode: 'Markdown' })
     return
   }
 
-  if (text === '👤 My Account' || text === '👤 Мой аккаунт') {
+  // Мой аккаунт
+  if (buttonTexts.account.includes(text)) {
     await handleAccountInfo(ctx)
     return
   }
 
-  if (text === '❓ Help' || text === '❓ Помощь') {
-    const user = await getTelegramUser(telegramId)
-    const lang = user?.language || 'en'
-    const { getMessage } = await import('./utils/messages')
-    await ctx.reply(getMessage(lang, 'help'), { parse_mode: 'Markdown' })
+  // Support - NEW
+  if (buttonTexts.support.includes(text)) {
+    await ctx.reply(getMessage(lang, 'support'), { parse_mode: 'Markdown' })
     return
   }
 
   // Default response
-  await ctx.reply('Use menu buttons or /help for available commands.')
+  await ctx.reply(
+    lang === 'ru'
+      ? '❌ Неизвестная команда. Используйте кнопки меню или /help для списка команд.'
+      : lang === 'es'
+      ? '❌ Comando desconocido. Usa los botones del menú o /help para la lista de comandos.'
+      : lang === 'de'
+      ? '❌ Unbekannter Befehl. Verwende Menü-Buttons oder /help für Befehlsliste.'
+      : lang === 'uk'
+      ? '❌ Невідома команда. Використовуйте кнопки меню або /help для списку команд.'
+      : lang === 'fr'
+      ? '❌ Commande inconnue. Utilisez les boutons du menu ou /help pour la liste des commandes.'
+      : '❌ Unknown command. Use menu buttons or /help for available commands.'
+  )
 })
 
 // ======================
